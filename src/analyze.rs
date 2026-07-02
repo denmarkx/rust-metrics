@@ -11,19 +11,27 @@ use syn::{
 };
 use proc_macro2::TokenTree;
 
-#[derive(Debug)]
-pub struct Visitor {
-    pub unsafe_traits: i32,
-    pub unsafe_exprs: i32,
-    pub unsafe_impls: i32,
-    pub unsafe_funcs: i32,
-    pub unsafe_mods: i32,
+#[derive(Debug, Default)]
+pub struct Visitor<'a> {
+    crate_name: &'a str,
 
-    pub ffi_export_funcs: i32,
-    pub ffi_import_funcs: i32,
+    unsafe_traits: i32,
+    unsafe_exprs: i32,
+    unsafe_impls: i32,
+    unsafe_funcs: i32,
+    unsafe_mods: i32,
+
+    ffi_export_funcs: i32,
+    ffi_import_funcs: i32,
 }
 
-impl<'a> Visit<'a> for Visitor {
+impl<'a> Visitor<'a> {
+    pub fn set_crate_name(&mut self, name: &'a str) {
+        self.crate_name = name;
+    }
+}
+
+impl<'a> Visit<'a> for Visitor<'_> {
     fn visit_item_impl(&mut self, node: &'a ItemImpl) {
         if node.unsafety.is_some() { self.unsafe_impls += 1; }
         syn::visit::visit_item_impl(self, node);

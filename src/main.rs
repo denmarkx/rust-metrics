@@ -15,6 +15,7 @@ use tokio;
 
 use std::fs;
 use std::process;
+use glob::glob;
 
 #[tokio::main]
 async fn main() {
@@ -40,18 +41,25 @@ async fn main() {
     // let mut archive = Archive::new(f.unwrap());
     // let _ = archive.unpack("./dst").await;
 
-    let src = fs::read_to_string("src/test.rs").unwrap();
-    let syntax = syn::parse_file(&src).unwrap();
-    dbg!(&syntax);
+    // let src = fs::read_to_string("src/test.rs").unwrap();
+    // let syntax = syn::parse_file(&src).unwrap();
 
-    let mut visitor = analyze::Visitor {
-        ffi_export_funcs: 0, ffi_import_funcs:0,
-        unsafe_mods: 0,
-        unsafe_traits: 0, unsafe_impls: 0,
-        unsafe_exprs: 0, unsafe_funcs: 0
-    };
+    // let mut visitor = analyze::Visitor::default();
+    // visitor.visit_file(&syntax);
 
-    visitor.visit_file(&syntax);
+    for crate_name in glob("crates/*").unwrap() {
+        let path = crate_name.unwrap();
+        let path_str = path.to_str().unwrap();
+        let pattern = format!("{}/**/*.rs", path_str);
+        
+        let mut visitor = analyze::Visitor::default();
+        visitor.set_crate_name(path.file_stem().unwrap().to_str().unwrap());
 
-    dbg!(visitor);
+        for entry in glob(&pattern).unwrap() {
+            let src = fs::read_to_string(entry.unwrap()).unwrap();
+            let syntax = syn::parse_file(&src).unwrap();
+            visitor.visit_file(&syntax);
+        }
+        dbg!(visitor);
+    }
 }
