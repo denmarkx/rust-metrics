@@ -1,0 +1,18 @@
+[package]
+name = "metrics"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-compression = { version = "0.4.42", features = ["futures-io", "gzip"] }
+flate2 = "1.1.9"
+futures = "0.3.32"
+futures-core = "0.3.32"
+futures-util = "0.3.32"
+reqwest = { version = "0.13.4", features = ["json", "stream"] }
+syn = { version = "2.0.118", features = ["full", "extra-traits", "visit"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio-macros = { version = "0.2.0-alpha.6" }
+tokio-tar = "0.3.1"
+proc-macro2 = "1.0.106"
