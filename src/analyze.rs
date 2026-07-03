@@ -105,14 +105,14 @@ impl<'a> Visit<'a> for CrateData {
     }
 }
 
-pub async fn analyze() {
-    let (tx, mut rx) = mpsc::channel::<CrateData>(WRITE_BUFFER_SIZE);
+pub async fn analyze(read_cap: &usize, write_cap: usize) {
+    let (tx, mut rx) = mpsc::channel::<CrateData>(write_cap);
 
     let write_handle = tokio::spawn(async move {
         let mut writer = Writer::new(WRITE_FILE_NAME).await;
-        let mut buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
+        let mut buffer = Vec::with_capacity(write_cap);
 
-        while rx.recv_many(&mut buffer, WRITE_BUFFER_SIZE).await > 0 {
+        while rx.recv_many(&mut buffer, write_cap).await > 0 {
             writer.write(&buffer).await.unwrap();
             buffer.clear();
         }
@@ -143,7 +143,7 @@ pub async fn analyze() {
             tx_clone.send(crate_data).await.unwrap();
         }
     })
-    .buffer_unordered(READ_BUFFER_TASK_SIZE)
+    .buffer_unordered(*read_cap)
     .for_each(|_| async {})
     .await;
 

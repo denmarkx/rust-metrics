@@ -18,7 +18,6 @@ use tokio::fs::File;
 use rayon::iter::ParallelIterator;
 use crates_index::GitIndex;
 
-const ASYNC_BUFFER_CAP : usize = 5; 
 const CRATE_OUTPUT_DIR: &str = "crates";
 
 struct Crate {
@@ -56,7 +55,7 @@ fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
     return crates;
 }
 
-pub async fn download(num_downloads: Option<&usize>) {
+pub async fn download(num_downloads: Option<&usize>, buffer_cap: &usize) {
     let crates : Vec<Crate> = get_crates(num_downloads);
     let num_crates = crates.len();
     let targets = stream::iter(crates);
@@ -102,7 +101,7 @@ pub async fn download(num_downloads: Option<&usize>) {
 
         }
     })
-    .buffer_unordered(ASYNC_BUFFER_CAP)
+    .buffer_unordered(*buffer_cap)
     .for_each(|_| async move {})
     .await;
 }
