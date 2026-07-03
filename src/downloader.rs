@@ -17,6 +17,7 @@ use tokio::fs::File;
 use crates_index::GitIndex;
 
 const ASYNC_BUFFER_CAP : usize = 5; 
+const CRATE_OUTPUT_DIR: &str = "crates";
 
 struct Crate {
     name: String,
@@ -34,7 +35,7 @@ fn get_crates() -> Vec<Crate> {
     return vec![cs];
 }
 
-pub async fn download(output_dir: &str) {
+pub async fn download() {
     let crates : Vec<Crate> = get_crates();
     let targets = stream::iter(crates);
 
@@ -46,7 +47,7 @@ pub async fn download(output_dir: &str) {
             let resp = client.get(crate_url).send().await;
             println!("Downloading Crate: {}", c.name);
 
-            let crate_dir_path = Path::new(output_dir);
+            let crate_dir_path = Path::new(CRATE_OUTPUT_DIR);
             let _ = crate_dir_path.join(&c.name);
 
             if !crate_dir_path.exists() {

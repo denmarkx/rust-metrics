@@ -1,3 +1,4 @@
+use crate::writer::Writer;
 use syn::visit::Visit;
 use syn::{
     ExprUnsafe,
@@ -9,21 +10,31 @@ use syn::{
     ItemFn,
     ForeignItem,
 };
+
+use futures::stream::{self, StreamExt};
 use serde::{Serialize, Deserialize};
 use proc_macro2::TokenTree;
+use tokio::sync::mpsc;
+use glob::glob;
+use std::path::PathBuf;
+use std::fs;
+
+const WRITE_BUFFER_SIZE : usize = 5;
+const READ_BUFFER_TASK_SIZE : usize = 5;
+const WRITE_FILE_NAME: &str = "crate_data.parquet";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CrateData {
     crate_name: String,
 
-    unsafe_traits: i32,
-    unsafe_exprs: i32,
-    unsafe_impls: i32,
-    unsafe_funcs: i32,
-    unsafe_mods: i32,
+    unsafe_traits: u32,
+    unsafe_exprs: u32,
+    unsafe_impls: u32,
+    unsafe_funcs: u32,
+    unsafe_mods: u32,
 
-    ffi_export_funcs: i32,
-    ffi_import_funcs: i32,
+    ffi_export_funcs: u32,
+    ffi_import_funcs: u32,
 }
 
 impl<'a> CrateData {
@@ -92,4 +103,49 @@ impl<'a> Visit<'a> for CrateData {
         self.unsafe_exprs += 1;
         syn::visit::visit_expr_unsafe(self, node);
     }
+}
+
+pub async fn analyze() {
+    let (tx, mut rx) = mpsc::channel::<CrateData>(WRITE_BUFFER_SIZE);
+
+    let write_handle = tokio::spawn(async move {
+        let mut writer = Writer::new(WRITE_FILE_NAME).await;
+        let mut buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
+
+        while rx.recv_many(&mut buffer, WRITE_BUFFER_SIZE).await > 0 {
+            writer.write(&buffer).await.unwrap();
+            buffer.clear();
+        }
+
+        writer.close().await.unwrap();
+    });
+
+    let it = glob("crates/*");
+    let mut dirs : Vec<PathBuf> = Vec::new();
+    it.unwrap().for_each(|x| { dirs.push(x.unwrap() )});
+
+    let targets = stream::iter(dirs);
+    let _ = targets.map(|p| {
+        let tx_clone = tx.clone();
+        async move {
+            let path_str = p.to_str().unwrap();
+            let pattern = format!("{}/**/*.rs", path_str);
+
+            let mut crate_data = CrateData::default();
+            crate_data.set_crate_name(p.file_stem().unwrap().to_str().unwrap());
+
+            for entry in glob(&pattern).unwrap() {
+                let src = fs::read_to_string(entry.unwrap()).unwrap();
+                let syntax = syn::parse_file(&src).unwrap();
+                crate_data.visit_file(&syntax);
+            }
+            tx_clone.send(crate_data).await.unwrap();
+        }
+    })
+    .buffer_unordered(READ_BUFFER_TASK_SIZE)
+    .for_each(|_| async {})
+    .await;
+
+    drop(tx);
+    write_handle.await.unwrap();
 }
