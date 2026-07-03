@@ -1,2 +1,6 @@
 /target
 /crates
+/index
+~
+crates.io-index
+*.parquet
