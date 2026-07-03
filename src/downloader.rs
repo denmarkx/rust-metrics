@@ -6,6 +6,7 @@ use futures::io::copy;
 use reqwest::Client;
 
 use std::io::{Error, ErrorKind};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::fs::DirBuilder;
 use std::path::Path;
@@ -61,13 +62,16 @@ pub async fn download(num_downloads: Option<&usize>) {
     let targets = stream::iter(crates);
 
     let client = Client::new();
-    let mut i = 1;
+    let count_arc = Arc::new(AtomicUsize::new(1));
     let _ = targets.map(|c| {
         let client = client.clone();
+        let count_clone = count_arc.clone();
         async move {
             let crate_url = format!("https://static.crates.io/crates/{}/{}-{}.crate", c.name, c.name, c.version);
             let resp = client.get(crate_url).send().await;
-            println!("Downloading Crate [{}/{}]: {}", i, num_crates, c.name);
+
+            let count = count_clone.fetch_add(1, Ordering::SeqCst);
+            println!("Downloading Crate [{}/{}]: {}", count, num_crates, c.name);
 
             let crate_dir_path = Path::new(CRATE_OUTPUT_DIR);
             let _ = crate_dir_path.join(&c.name);
@@ -95,7 +99,7 @@ pub async fn download(num_downloads: Option<&usize>) {
             let mut archive = Archive::new(file.unwrap());
             let _ = archive.unpack(&crate_dir_path).await;
             let _ = std::fs::remove_file(&output_file_path);
-            i += 1;
+
         }
     })
     .buffer_unordered(ASYNC_BUFFER_CAP)
