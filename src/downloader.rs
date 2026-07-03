@@ -25,27 +25,38 @@ struct Crate {
 }
 
 fn get_crates() -> Vec<Crate> {
-    let index = GitIndex::new_cargo_default().unwrap();
-    let c = index.crate_("byteorder").unwrap();
-    let cs = Crate {
-        name: c.name().to_string(),
-        version: c.highest_version().version().to_string()
-    };
+    let index = GitIndex::new_cargo_default().expect("Failed to find or clone Cargo registry.");
+    let result = index.crate_("libusb1_sys");
+
+    let mut crates : Vec<Crate> = Vec::new();
+
+    if let Some(c) = result {
+        let cs = Crate {
+            name: c.name().to_string(),
+            version: c.highest_version().version().to_string()
+        };
+        crates.push(cs);
+    } else {
+        println!("Failed to extract crate data.");
+    }
+
     // index.crates_parallel
-    return vec![cs];
+    return crates;
 }
 
 pub async fn download() {
     let crates : Vec<Crate> = get_crates();
+    let num_crates = crates.len();
     let targets = stream::iter(crates);
 
     let client = Client::new();
+    let mut i = 1;
     let _ = targets.map(|c| {
         let client = client.clone();
         async move {
             let crate_url = format!("https://static.crates.io/crates/{}/{}-{}.crate", c.name, c.name, c.version);
             let resp = client.get(crate_url).send().await;
-            println!("Downloading Crate: {}", c.name);
+            println!("Downloading Crate [{}/{}]: {}", i, num_crates, c.name);
 
             let crate_dir_path = Path::new(CRATE_OUTPUT_DIR);
             let _ = crate_dir_path.join(&c.name);
@@ -73,9 +84,10 @@ pub async fn download() {
             let mut archive = Archive::new(file.unwrap());
             let _ = archive.unpack(&crate_dir_path).await;
             let _ = std::fs::remove_file(&output_file_path);
+            i += 1;
         }
     })
     .buffer_unordered(ASYNC_BUFFER_CAP)
-    .for_each(|r| async move { dbg!(r); })
+    .for_each(|_| async move {})
     .await;
 }

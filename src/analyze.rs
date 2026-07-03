@@ -134,6 +134,7 @@ pub async fn analyze() {
             let mut crate_data = CrateData::default();
             crate_data.set_crate_name(p.file_stem().unwrap().to_str().unwrap());
 
+            println!("Analyzing crate: {}", crate_data.crate_name);
             for entry in glob(&pattern).unwrap() {
                 let src = fs::read_to_string(entry.unwrap()).unwrap();
                 let syntax = syn::parse_file(&src).unwrap();
