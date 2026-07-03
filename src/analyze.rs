@@ -9,11 +9,12 @@ use syn::{
     ItemFn,
     ForeignItem,
 };
+use serde::{Serialize, Deserialize};
 use proc_macro2::TokenTree;
 
-#[derive(Debug, Default)]
-pub struct Visitor<'a> {
-    crate_name: &'a str,
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct CrateData {
+    crate_name: String,
 
     unsafe_traits: i32,
     unsafe_exprs: i32,
@@ -25,13 +26,13 @@ pub struct Visitor<'a> {
     ffi_import_funcs: i32,
 }
 
-impl<'a> Visitor<'a> {
-    pub fn set_crate_name(&mut self, name: &'a str) {
-        self.crate_name = name;
+impl<'a> CrateData {
+    pub fn set_crate_name(&mut self, name: &str) {
+        self.crate_name = name.to_string();
     }
 }
 
-impl<'a> Visit<'a> for Visitor<'_> {
+impl<'a> Visit<'a> for CrateData {
     fn visit_item_impl(&mut self, node: &'a ItemImpl) {
         if node.unsafety.is_some() { self.unsafe_impls += 1; }
         syn::visit::visit_item_impl(self, node);

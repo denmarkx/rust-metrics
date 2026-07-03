@@ -1,21 +1,30 @@
 mod analyze;
+mod writer;
 
 use futures::io::BufReader;
 use async_compression::futures::bufread::GzipDecoder;
 use futures_util::stream::TryStreamExt;
 use syn::visit::Visit;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
+use tokio::sync::mpsc;
 use std::io::{Error, ErrorKind};
 use std::collections::HashMap;
 use futures::io::copy;
+use std::sync::Arc;
+use arrow::datatypes::{DataType, Schema, Field};
 use tokio::fs::File;
 use reqwest::Client;
 use tokio_tar::Archive;
 use tokio;
+use arrow::array::UInt32Array;
+use arrow::record_batch::RecordBatch;
 
 use std::fs;
 use std::process;
 use glob::glob;
+
+const WRITE_BUFFER_SIZE : usize = 5;
+const WRITE_FILE_NAME: &str = "crate_data.parquet";
 
 #[tokio::main]
 async fn main() {
@@ -47,12 +56,14 @@ async fn main() {
     // let mut visitor = analyze::Visitor::default();
     // visitor.visit_file(&syntax);
 
+    let (tx, mut rx) = mpsc::channel::<analyze::CrateData>(5);
+
     for crate_name in glob("crates/*").unwrap() {
         let path = crate_name.unwrap();
         let path_str = path.to_str().unwrap();
         let pattern = format!("{}/**/*.rs", path_str);
         
-        let mut visitor = analyze::Visitor::default();
+        let mut visitor = analyze::CrateData::default();
         visitor.set_crate_name(path.file_stem().unwrap().to_str().unwrap());
 
         for entry in glob(&pattern).unwrap() {
@@ -60,6 +71,26 @@ async fn main() {
             let syntax = syn::parse_file(&src).unwrap();
             visitor.visit_file(&syntax);
         }
-        dbg!(visitor);
+        // dbg!(visitor);
     }
+
+    let write_handle = tokio::spawn(async move {
+        let mut writer = writer::Writer::new(WRITE_FILE_NAME).await;
+        let mut buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
+
+        while rx.recv_many(&mut buffer, WRITE_BUFFER_SIZE).await > 0 {
+            writer.write(&buffer).await.unwrap();
+            buffer.clear();
+        }
+        writer.close().await.unwrap();
+    });
+
+    let other_handle = tokio::spawn(async move {
+        let tx_clone = tx.clone();
+        for i in 0..10 {
+            // tx_clone.send(Data { n: i }).await.unwrap();
+        }
+    });
+
+    let _ = tokio::join!(write_handle, other_handle);
 }
