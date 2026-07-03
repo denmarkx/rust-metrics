@@ -6,6 +6,7 @@ use futures::io::copy;
 use reqwest::Client;
 
 use std::io::{Error, ErrorKind};
+use std::sync::{Arc, Mutex};
 use std::fs::DirBuilder;
 use std::path::Path;
 
@@ -13,7 +14,7 @@ use tokio_util::compat::TokioAsyncWriteCompatExt;
 use tokio_tar::Archive;
 use tokio::fs::File;
 
-// use rayon::iter::ParallelIterator;
+use rayon::iter::ParallelIterator;
 use crates_index::GitIndex;
 
 const ASYNC_BUFFER_CAP : usize = 5; 
@@ -24,28 +25,38 @@ struct Crate {
     version: String
 }
 
-fn get_crates() -> Vec<Crate> {
+fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
     let index = GitIndex::new_cargo_default().expect("Failed to find or clone Cargo registry.");
-    let result = index.crate_("libusb1_sys");
 
-    let mut crates : Vec<Crate> = Vec::new();
+    let mut crates = Vec::new();
+    let arc_vec = Arc::new(Mutex::new(&mut crates));
 
-    if let Some(c) = result {
-        let cs = Crate {
-            name: c.name().to_string(),
-            version: c.highest_version().version().to_string()
-        };
-        crates.push(cs);
-    } else {
-        println!("Failed to extract crate data.");
-    }
+    let it = match num_downloads {
+        Some(n) => index.crates_parallel().take_any(*n),
+        None => {
+            let size = index.crates_parallel().count();
+            index.crates_parallel().take_any(size)
+        }
+    };
 
-    // index.crates_parallel
+    it.for_each(|c| {
+        if let Ok(x) = c {
+            let cs = Crate {
+                name: x.name().to_string(),
+                version: x.highest_version().version().to_string()
+            };
+
+            let mut vec = arc_vec.lock().unwrap();
+            vec.push(cs);
+        } else {
+            println!("Failed to extract crate data.");
+        }
+    });
     return crates;
 }
 
-pub async fn download() {
-    let crates : Vec<Crate> = get_crates();
+pub async fn download(num_downloads: Option<&usize>) {
+    let crates : Vec<Crate> = get_crates(num_downloads);
     let num_crates = crates.len();
     let targets = stream::iter(crates);
 
