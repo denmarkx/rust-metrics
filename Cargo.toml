@@ -2,6 +2,7 @@
 name = "metrics"
 version = "0.1.0"
 edition = "2024"
+exclude = ["/crates/"]
 
 [dependencies]
 async-compression = { version = "0.4.42", features = ["futures-io", "gzip"] }
@@ -21,4 +22,4 @@ parquet = { version="59.0.0", features = ["arrow", "async"] }
 arrow = "59.0.0"
 serde_arrow = { version="0.14.2", features = ["arrow-59"] }
 serde = "1.0.228"
-clap = "4.6.1"
+clap = { version="4.6.1", features = ["cargo"] }
