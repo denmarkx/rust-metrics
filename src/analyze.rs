@@ -19,8 +19,6 @@ use glob::glob;
 use std::path::PathBuf;
 use std::fs;
 
-const WRITE_BUFFER_SIZE : usize = 5;
-const READ_BUFFER_TASK_SIZE : usize = 5;
 const WRITE_FILE_NAME: &str = "crate_data.parquet";
 
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -8,8 +8,9 @@ use reqwest::Client;
 use std::io::{Error, ErrorKind};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::fs::DirBuilder;
-use std::path::Path;
+use std::fs::{DirBuilder, read_dir};
+use std::path::{Path, PathBuf};
+use std::env;
 
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 use tokio_tar::Archive;
@@ -17,7 +18,9 @@ use tokio::fs::File;
 
 use rayon::iter::ParallelIterator;
 use crates_index::GitIndex;
+use home::cargo_home;
 
+const CRATE_INDEX_URL: &str = "https://github.com/rust-lang/crates.io-index";
 const CRATE_OUTPUT_DIR: &str = "crates";
 
 struct Crate {
@@ -25,8 +28,54 @@ struct Crate {
     version: String
 }
 
+/*
+ * Attempts to locate the cargo registry: first by CARGO_REGISTRY,
+ * then by CARGO_HOME/registry/src (which it'll use the last modified path)
+ * and finally locally within the "registry" folder.
+ * 
+ * If all else fails, crates_index::with_path will clone the index either at
+ * the CARGO_REGISTRY env var or within the current directory as registry/.
+*/
+fn find_registry() -> PathBuf {
+    if let Ok(p) = env::var("CARGO_REGISTRY") {
+        return PathBuf::from(p)
+    }
+
+    if let Ok(p) = cargo_home() {
+        let mut registry_path = PathBuf::new();
+        registry_path.push(p);
+        registry_path.push("registry/index");
+        if registry_path.exists() {
+            let mut entries: Vec<_> = read_dir(&registry_path)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|f| f.file_type().is_ok_and(|t| t.is_dir()))
+                .collect();
+
+            if entries.is_empty() {
+                return PathBuf::from("registry");
+            }
+
+            entries.sort_by_key(|e| {
+                e.metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or_else(|_| std::time::SystemTime::UNIX_EPOCH)
+            });
+
+            let entry = entries.last().unwrap();
+            return entry.path();
+        }
+    }
+
+    return PathBuf::from("registry");
+}
+
 fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
-    let index = GitIndex::new_cargo_default().expect("Failed to find or clone Cargo registry.");
+    let registry_path = find_registry();
+    println!("Crate Registry Path: {:?}", registry_path);
+
+    let index = GitIndex::with_path(registry_path, CRATE_INDEX_URL)
+        .expect("Failed to find or clone Cargo registry.");
 
     let mut crates = Vec::new();
     let arc_vec = Arc::new(Mutex::new(&mut crates));

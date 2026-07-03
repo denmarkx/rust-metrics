@@ -2690,6 +2690,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "glob",
+ "home",
  "memmap2",
  "parquet",
  "proc-macro2",
