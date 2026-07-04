@@ -25,20 +25,20 @@ async fn main() {
         .arg(
             arg!(-b --downloadcap "Maximum number of active workers for the download tasks.")
             .required(false)
-            .default_value("10")
+            .default_value("50")
             .value_parser(value_parser!(usize))
         )
         .arg(
             arg!(-r --readcap "Maximum number of active workers for the analysis read tasks.")
             .required(false)
-            .default_value("20")
+            .default_value("75")
             .value_parser(value_parser!(usize))
         )
         .arg(
             arg!(-c --writecap "Capacity of internal analysis buffer before writing to file.")
             .required(false)
             .value_parser(value_parser!(usize))
-            .default_value("500")
+            .default_value("1000")
         )
         .get_matches();
 
