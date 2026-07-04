@@ -1,9 +1,10 @@
+mod error_handling;
 mod writer;
 mod analyze;
 mod downloader;
 
 use std::sync::Arc;
-
+use std::panic;
 use tokio::sync::mpsc;
 use clap::{arg, command, value_parser};
 
@@ -54,4 +55,9 @@ async fn main() {
     let analysis = analyze::analyze(rx, *read_buffer_cap, *write_buffer_cap);
 
     tokio::join!(download, analysis);
+
+    panic::set_hook(Box::new(|_| {
+        error_handling::flush();
+    }));
+    error_handling::flush();
 }

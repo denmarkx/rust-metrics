@@ -112,6 +112,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.103"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
+
+[[package]]
 name = "arc-swap"
 version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2681,6 +2687,7 @@ dependencies = [
 name = "metrics"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "arrow",
  "async-compression",
  "clap",
@@ -2698,6 +2705,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_arrow",
+ "serde_json",
  "syn 2.0.118",
  "tokio",
  "tokio-macros 0.2.6",

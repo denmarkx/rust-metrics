@@ -1,9 +1,11 @@
+use crate::error_handling::handle_error;
 use async_compression::futures::bufread::GzipDecoder;
 use futures_util::stream::TryStreamExt;
 use futures::stream::{self, StreamExt};
 use futures::io::BufReader;
 use futures::io::copy;
 use reqwest::Client;
+use anyhow::Result;
 
 use std::io::{Error, ErrorKind};
 use std::sync::{Arc, Mutex};
@@ -20,9 +22,12 @@ use rayon::iter::ParallelIterator;
 use crates_index::GitIndex;
 use home::cargo_home;
 
+use serde::{Deserialize, Serialize};
+
 const CRATE_INDEX_URL: &str = "https://github.com/rust-lang/crates.io-index";
 const CRATE_OUTPUT_DIR: &str = "crates";
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Crate {
     pub name: String,
     pub version: String
@@ -104,7 +109,46 @@ fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
     return crates;
 }
 
+async fn download_crate(c: &Crate, client: &Client) -> Result<()> {
+    println!("Downloading Crate: {}", c.name);
+
+    let crate_url = format!("https://static.crates.io/crates/{}/{}-{}.crate", c.name, c.name, c.version);
+    let resp = client.get(crate_url).send().await;
+
+    let output_file_path = Path::new(CRATE_OUTPUT_DIR).join(format!("{}.crate", c.name));
+
+    let stream = resp?
+        .bytes_stream()
+        .map_err(|e| Error::new(ErrorKind::Other, e))
+        .into_async_read();
+
+    let mut output_file = File::create(&output_file_path)
+        .await?
+        .compat_write();
+
+    let buf_reader = BufReader::new(stream);
+    let gz_decoder = GzipDecoder::new(buf_reader);
+    copy(gz_decoder, &mut output_file).await?;
+
+    let file = File::open(&output_file_path).await?;
+    let mut archive = Archive::new(file);
+    archive.unpack(CRATE_OUTPUT_DIR).await?;
+
+    // It's not really a damaging error if this fails..
+    if let Err(_) = std::fs::remove_file(&output_file_path) {
+        handle_error(&c, "remove_crate_file");
+    }
+
+    Ok(())
+}
+
 pub async fn download(tx: Arc<mpsc::Sender<Crate>>, num_downloads : Option<&usize>, buffer_cap: &usize) {
+    let crate_dir_path = Path::new(CRATE_OUTPUT_DIR);
+    if !crate_dir_path.exists() {
+        DirBuilder::new().create(&crate_dir_path)
+            .expect("Failed to create crate output directory.");
+    }
+
     let crates : Vec<Crate> = get_crates(num_downloads);
     let targets = stream::iter(crates);
 
@@ -113,38 +157,11 @@ pub async fn download(tx: Arc<mpsc::Sender<Crate>>, num_downloads : Option<&usiz
         let client = client.clone();
         let tx_clone = tx.clone();
         async move {
-            let crate_url = format!("https://static.crates.io/crates/{}/{}-{}.crate", c.name, c.name, c.version);
-            let resp = client.get(crate_url).send().await;
-
-            println!("Downloading Crate: {}", c.name);
-
-            let crate_dir_path = Path::new(CRATE_OUTPUT_DIR);
-            let _ = crate_dir_path.join(&c.name);
-
-            if !crate_dir_path.exists() {
-                DirBuilder::new().create(crate_dir_path).expect("Failed to create crate output directory.");
+            if let Ok(_) = download_crate(&c, &client).await {
+                tx_clone.send(c).await.unwrap();
+            } else {
+                handle_error(&c, "download");
             }
-
-            let output_file_path = Path::new(crate_dir_path).join(format!("{}.crate", c.name));
-
-            let stream = resp.unwrap()
-                .bytes_stream()
-                .map_err(|e| Error::new(ErrorKind::Other, e))
-                .into_async_read();
-
-            let mut output_file = File::create(&output_file_path).await
-                .expect("Failed to create .crate file.")
-                .compat_write();
-
-            let buf_reader = BufReader::new(stream);
-            let gz_decoder = GzipDecoder::new(buf_reader);
-            let _ = copy(gz_decoder, &mut output_file).await;
-
-            let file = File::open(&output_file_path).await;
-            let mut archive = Archive::new(file.unwrap());
-            let _ = archive.unpack(&crate_dir_path).await;
-            let _ = std::fs::remove_file(&output_file_path);
-            tx_clone.send(c).await.unwrap();
         }
     })
     .buffer_unordered(*buffer_cap)

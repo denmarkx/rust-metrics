@@ -1,3 +1,4 @@
+use crate::error_handling::{handle_error_raw, handle_error_raw_name};
 use crate::writer::Writer;
 use syn::visit::Visit;
 use syn::{
@@ -16,6 +17,7 @@ use serde::{Serialize, Deserialize};
 use proc_macro2::TokenTree;
 use tokio::sync::mpsc;
 use crate::downloader;
+use anyhow::{Result, bail};
 use tokio::fs;
 use glob::glob;
 
@@ -103,6 +105,32 @@ impl<'a> Visit<'a> for CrateData {
     }
 }
 
+async fn process_crate(data: &mut CrateData, c: &downloader::Crate) -> Result<()> {
+    let crate_dir_path = format!("crates/{}-{}", c.name, c.version);
+    let pattern = format!("{}/**/*.rs", crate_dir_path);
+    let paths = glob(&pattern)?;
+    let mut num = 0;
+
+    for entry in paths {
+        let src = fs::read_to_string(&entry?).await?;
+        let syntax = syn::parse_file(&src)?;
+        data.visit_file(&syntax);
+        num += 1;
+    }
+
+    // Sort of a downloading or pathing error if we found something with nothing in it..
+    if num == 0 {
+        bail!("No entries found for crate: {}", c.name);
+    }
+
+    let result = fs::remove_dir_all(&crate_dir_path).await;
+    if let Err(_) = result {
+        println!("Failed to remove crate directory: {}.", crate_dir_path)
+    }
+
+    Ok(())
+}
+
 async fn analyze_stream(chunk: Vec<downloader::Crate>, tx: &mpsc::Sender<CrateData>, read_cap: usize) {
     let targets = stream::iter(chunk);
     let _ = targets.map(|c| {
@@ -112,20 +140,13 @@ async fn analyze_stream(chunk: Vec<downloader::Crate>, tx: &mpsc::Sender<CrateDa
             crate_data.set_crate_name(&c.name);
             println!("Analyzing crate: {}", crate_data.crate_name);
 
-            let crate_dir_path = format!("crates/{}-{}", c.name, c.version);
-            let pattern = format!("{}/*.rs", crate_dir_path);
-
-            for entry in glob(&pattern).unwrap() {
-                let src = fs::read_to_string(entry.unwrap()).await.unwrap();
-                let syntax = syn::parse_file(&src).unwrap();
-                crate_data.visit_file(&syntax);
+            if let Ok(_) = process_crate(&mut crate_data, &c).await {
+                if let Ok(_) = tx_clone.send(crate_data).await {
+                    return;
+                }
             }
 
-            let result = fs::remove_dir_all(&crate_dir_path).await;
-            match result {
-                Err(_) => println!("Failed to remove crate directory: {}.", crate_dir_path),
-                Ok(_) => tx_clone.send(crate_data).await.unwrap(),
-            };
+            handle_error_raw(c.name, c.version, "analyze_stream");
         }
     })
     .buffer_unordered(read_cap)
@@ -141,7 +162,9 @@ pub async fn analyze(mut download_rx: mpsc::Receiver<downloader::Crate>, read_ca
         let mut buffer = Vec::with_capacity(write_cap);
 
         while rx.recv_many(&mut buffer, write_cap).await > 0 {
-            writer.write(&buffer).await.unwrap();
+            if let Err(_) = writer.write(&buffer).await {
+                buffer.iter().for_each(|c| handle_error_raw_name(c.crate_name.clone(), "analyze_writer"));
+            }
             buffer.clear();
         }
 
