@@ -15,9 +15,9 @@ use futures::stream::{self, StreamExt};
 use serde::{Serialize, Deserialize};
 use proc_macro2::TokenTree;
 use tokio::sync::mpsc;
+use crate::downloader;
+use tokio::fs;
 use glob::glob;
-use std::path::PathBuf;
-use std::fs;
 
 const WRITE_FILE_NAME: &str = "crate_data.parquet";
 
@@ -103,7 +103,37 @@ impl<'a> Visit<'a> for CrateData {
     }
 }
 
-pub async fn analyze(read_cap: &usize, write_cap: usize) {
+async fn analyze_stream(chunk: Vec<downloader::Crate>, tx: &mpsc::Sender<CrateData>, read_cap: usize) {
+    let targets = stream::iter(chunk);
+    let _ = targets.map(|c| {
+        let tx_clone = tx.clone();
+        async move {
+            let mut crate_data = CrateData::default();
+            crate_data.set_crate_name(&c.name);
+            println!("Analyzing crate: {}", crate_data.crate_name);
+
+            let crate_dir_path = format!("crates/{}-{}", c.name, c.version);
+            let pattern = format!("{}/*.rs", crate_dir_path);
+
+            for entry in glob(&pattern).unwrap() {
+                let src = fs::read_to_string(entry.unwrap()).await.unwrap();
+                let syntax = syn::parse_file(&src).unwrap();
+                crate_data.visit_file(&syntax);
+            }
+
+            let result = fs::remove_dir_all(&crate_dir_path).await;
+            match result {
+                Err(_) => println!("Failed to remove crate directory: {}.", crate_dir_path),
+                Ok(_) => tx_clone.send(crate_data).await.unwrap(),
+            };
+        }
+    })
+    .buffer_unordered(read_cap)
+    .for_each(|_| async {})
+    .await;
+}
+
+pub async fn analyze(mut download_rx: mpsc::Receiver<downloader::Crate>, read_cap: usize, write_cap: usize) {
     let (tx, mut rx) = mpsc::channel::<CrateData>(write_cap);
 
     let write_handle = tokio::spawn(async move {
@@ -118,33 +148,14 @@ pub async fn analyze(read_cap: &usize, write_cap: usize) {
         writer.close().await.unwrap();
     });
 
-    let it = glob("crates/*");
-    let mut dirs : Vec<PathBuf> = Vec::new();
-    it.unwrap().for_each(|x| { dirs.push(x.unwrap() )});
-
-    let targets = stream::iter(dirs);
-    let _ = targets.map(|p| {
-        let tx_clone = tx.clone();
-        async move {
-            let path_str = p.to_str().unwrap();
-            let pattern = format!("{}/**/*.rs", path_str);
-
-            let mut crate_data = CrateData::default();
-            crate_data.set_crate_name(p.file_stem().unwrap().to_str().unwrap());
-
-            println!("Analyzing crate: {}", crate_data.crate_name);
-            for entry in glob(&pattern).unwrap() {
-                let src = fs::read_to_string(entry.unwrap()).unwrap();
-                let syntax = syn::parse_file(&src).unwrap();
-                crate_data.visit_file(&syntax);
-            }
-            tx_clone.send(crate_data).await.unwrap();
+    let download_handle = tokio::spawn(async move {
+        let mut buffer = Vec::with_capacity(5);
+        while download_rx.recv_many(&mut buffer, 5).await > 0 {
+            let chunk : Vec<downloader::Crate> = buffer.drain(..).collect();
+            analyze_stream(chunk, &tx, read_cap).await;
         }
-    })
-    .buffer_unordered(*read_cap)
-    .for_each(|_| async {})
-    .await;
+    });
 
-    drop(tx);
+    download_handle.await.unwrap();
     write_handle.await.unwrap();
 }

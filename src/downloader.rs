@@ -6,13 +6,13 @@ use futures::io::copy;
 use reqwest::Client;
 
 use std::io::{Error, ErrorKind};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::fs::{DirBuilder, read_dir};
 use std::path::{Path, PathBuf};
 use std::env;
 
 use tokio_util::compat::TokioAsyncWriteCompatExt;
+use tokio::sync::mpsc;
 use tokio_tar::Archive;
 use tokio::fs::File;
 
@@ -23,9 +23,9 @@ use home::cargo_home;
 const CRATE_INDEX_URL: &str = "https://github.com/rust-lang/crates.io-index";
 const CRATE_OUTPUT_DIR: &str = "crates";
 
-struct Crate {
-    name: String,
-    version: String
+pub(crate) struct Crate {
+    pub name: String,
+    pub version: String
 }
 
 /*
@@ -104,22 +104,19 @@ fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
     return crates;
 }
 
-pub async fn download(num_downloads: Option<&usize>, buffer_cap: &usize) {
+pub async fn download(tx: Arc<mpsc::Sender<Crate>>, num_downloads : Option<&usize>, buffer_cap: &usize) {
     let crates : Vec<Crate> = get_crates(num_downloads);
-    let num_crates = crates.len();
     let targets = stream::iter(crates);
 
     let client = Client::new();
-    let count_arc = Arc::new(AtomicUsize::new(1));
     let _ = targets.map(|c| {
         let client = client.clone();
-        let count_clone = count_arc.clone();
+        let tx_clone = tx.clone();
         async move {
             let crate_url = format!("https://static.crates.io/crates/{}/{}-{}.crate", c.name, c.name, c.version);
             let resp = client.get(crate_url).send().await;
 
-            let count = count_clone.fetch_add(1, Ordering::SeqCst);
-            println!("Downloading Crate [{}/{}]: {}", count, num_crates, c.name);
+            println!("Downloading Crate: {}", c.name);
 
             let crate_dir_path = Path::new(CRATE_OUTPUT_DIR);
             let _ = crate_dir_path.join(&c.name);
@@ -147,7 +144,7 @@ pub async fn download(num_downloads: Option<&usize>, buffer_cap: &usize) {
             let mut archive = Archive::new(file.unwrap());
             let _ = archive.unpack(&crate_dir_path).await;
             let _ = std::fs::remove_file(&output_file_path);
-
+            tx_clone.send(c).await.unwrap();
         }
     })
     .buffer_unordered(*buffer_cap)
