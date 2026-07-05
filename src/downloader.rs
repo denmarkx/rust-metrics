@@ -1,4 +1,4 @@
-use crate::error_handling::handle_error;
+use crate::error_handling::{handle_error, handle_error_raw};
 use async_compression::futures::bufread::GzipDecoder;
 use futures_util::stream::TryStreamExt;
 use futures::stream::{self, StreamExt};
@@ -7,6 +7,7 @@ use futures::io::copy;
 use reqwest::Client;
 use anyhow::Result;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{Error, ErrorKind};
 use std::sync::{Arc, Mutex};
 use std::fs::{DirBuilder, read_dir};
@@ -75,6 +76,11 @@ fn find_registry() -> PathBuf {
     return PathBuf::from("registry");
 }
 
+fn want_crate(name: &String) -> bool {
+    let x = vec!["typenum"];
+    x.contains(&name.as_str())
+}
+
 fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
     let registry_path = find_registry();
     println!("Crate Registry Path: {:?}", registry_path);
@@ -82,30 +88,27 @@ fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
     let index = GitIndex::with_path(registry_path, CRATE_INDEX_URL)
         .expect("Failed to find or clone Cargo registry.");
 
-    let mut crates = Vec::new();
-    let arc_vec = Arc::new(Mutex::new(&mut crates));
+    if let Some(n) = num_downloads {
+        let crates : Vec<Crate> = index.crates_parallel()
+            .take_any(*n)
+            .map(|r| {
+                let data = r.unwrap();
+                Crate { name: data.name().to_string(), version: data.highest_version().version().to_string() }
+            })
+            .collect();
+        return crates;
+    }
 
-    let it = match num_downloads {
-        Some(n) => index.crates_parallel().take_any(*n),
-        None => {
-            let size = index.crates_parallel().count();
-            index.crates_parallel().take_any(size)
-        }
-    };
-
-    it.for_each(|c| {
-        if let Ok(x) = c {
-            let cs = Crate {
-                name: x.name().to_string(),
-                version: x.highest_version().version().to_string()
-            };
-
-            let mut vec = arc_vec.lock().unwrap();
-            vec.push(cs);
-        } else {
-            println!("Failed to extract crate data.");
-        }
-    });
+    let crates : Vec<Crate> = index.crates_parallel()
+        .filter_map(|r| {
+            let data = r.unwrap();
+            if want_crate(&data.name().to_string()) {
+                Some(Crate { name: data.name().to_string(), version: data.highest_version().version().to_string() })
+            } else {
+                None
+            }
+        })
+        .collect();
     return crates;
 }
 
@@ -150,18 +153,24 @@ pub async fn download(tx: Arc<mpsc::Sender<Crate>>, num_downloads : Option<&usiz
     }
 
     let crates : Vec<Crate> = get_crates(num_downloads);
-    let targets = stream::iter(crates);
+    let total = crates.len();
+    let count = Arc::new(AtomicUsize::new(total));
 
     let client = Client::new();
-    let _ = targets.map(|c| {
+    let _ = stream::iter(crates).map(|c| {
         let client = client.clone();
         let tx_clone = tx.clone();
+        let count = count.clone();
+
         async move {
             if let Ok(_) = download_crate(&c, &client).await {
                 tx_clone.send(c).await.unwrap();
             } else {
                 handle_error(&c, "download");
             }
+
+            let remainder = count.fetch_sub(1, Ordering::Relaxed);
+            println!("{remainder} crates left remaining.");
         }
     })
     .buffer_unordered(*buffer_cap)

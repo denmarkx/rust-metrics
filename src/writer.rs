@@ -41,6 +41,10 @@ impl Writer {
         self.writer.write(&batch).await
     }
 
+    pub async fn flush(&mut self) -> Result<(), ParquetError> {
+        self.writer.flush().await
+    }
+
     pub async fn close(self) -> Result<ParquetMetaData, ParquetError> {
         self.writer.close().await
     }
