@@ -37,37 +37,40 @@ pub struct CrateData {
     ffi_import_funcs: u32,
 }
 
-impl<'a> CrateData {
+impl CrateData {
     pub fn set_crate_name(&mut self, name: &str) {
         self.crate_name = name.to_string();
     }
 }
 
-impl<'a> Visit<'a> for CrateData {
+struct Visitor<'a> {
+    data: &'a mut CrateData,
+}
+
+impl<'a> Visit<'a> for Visitor<'_> {
     fn visit_item_impl(&mut self, node: &'a ItemImpl) {
-        if node.unsafety.is_some() { self.unsafe_impls += 1; }
+        if node.unsafety.is_some() { self.data.unsafe_impls += 1; }
         syn::visit::visit_item_impl(self, node);
     }
 
     fn visit_item_fn(&mut self, node: &'a ItemFn) {
-        if node.sig.unsafety.is_some() { self.unsafe_funcs += 1; }
-        if node.sig.abi.is_some() { self.ffi_export_funcs += 1; }
-
+        if node.sig.unsafety.is_some() { self.data.unsafe_funcs += 1; }
+        if node.sig.abi.is_some() { self.data.ffi_export_funcs += 1; }
         syn::visit::visit_item_fn(self, node);
     }
 
     fn visit_impl_item_fn(&mut self, node: &'a ImplItemFn) {
-        if node.sig.unsafety.is_some() { self.unsafe_funcs += 1; }
-        if node.sig.abi.is_some() { self.ffi_export_funcs += 1; }
+        if node.sig.unsafety.is_some() { self.data.unsafe_funcs += 1; }
+        if node.sig.abi.is_some() { self.data.ffi_export_funcs += 1; }
         syn::visit::visit_impl_item_fn(self, node);
     }
 
     fn visit_foreign_item_fn(&mut self, node: &'a ForeignItemFn) {
-        self.ffi_import_funcs += 1;
+        self.data.ffi_import_funcs += 1;
 
         // regardless if they are marked unsafe or not,
         // we consider FFI exported functions to be unsafe.
-        self.unsafe_funcs += 1;
+        self.data.unsafe_funcs += 1;
         syn::visit::visit_foreign_item_fn(self, node);
     }
 
@@ -77,11 +80,11 @@ impl<'a> Visit<'a> for CrateData {
             for token in x.clone().into_iter() {
                 if let TokenTree::Ident(ident) = token {
                     if ident.to_string().contains("fn") {
-                        self.ffi_import_funcs += 1;
+                        self.data.ffi_import_funcs += 1;
 
                         // in the sense of safety and FFI boundaries,
                         // i still consider this unsafe.
-                        self.unsafe_funcs += 1;
+                        self.data.unsafe_funcs += 1;
                     }
                 }
             }
@@ -90,17 +93,17 @@ impl<'a> Visit<'a> for CrateData {
     }
 
     fn visit_item_mod(&mut self, node: &'a ItemMod) {
-        if node.unsafety.is_some() { self.unsafe_mods += 1; }
+        if node.unsafety.is_some() { self.data.unsafe_mods += 1; }
         syn::visit::visit_item_mod(self, node);
     }
 
     fn visit_item_trait(&mut self, node: &'a ItemTrait) {
-        if node.unsafety.is_some() { self.unsafe_traits += 1; }
+        if node.unsafety.is_some() { self.data.unsafe_traits += 1; }
         syn::visit::visit_item_trait(self, node);
     }
 
     fn visit_expr_unsafe(&mut self, node: &'a ExprUnsafe) {
-        self.unsafe_exprs += 1;
+        self.data.unsafe_exprs += 1;
         syn::visit::visit_expr_unsafe(self, node);
     }
 }
@@ -114,7 +117,10 @@ async fn process_crate(data: &mut CrateData, c: &downloader::Crate) -> Result<()
     for entry in paths {
         let src = fs::read_to_string(&entry?).await?;
         let syntax = syn::parse_file(&src)?;
-        data.visit_file(&syntax);
+        {
+            let mut visitor = Visitor { data };
+            visitor.visit_file(&syntax);
+        }
         num += 1;
     }
 
@@ -154,7 +160,7 @@ async fn analyze_stream(chunk: Vec<downloader::Crate>, tx: &mpsc::Sender<CrateDa
     .await;
 }
 
-pub async fn analyze(mut download_rx: mpsc::Receiver<downloader::Crate>, read_cap: usize, write_cap: usize) {
+pub async fn analyze(mut download_rx: mpsc::Receiver<downloader::Crate>, internal_cap: usize, read_cap: usize, write_cap: usize) {
     let (tx, mut rx) = mpsc::channel::<CrateData>(write_cap);
 
     let write_handle = tokio::spawn(async move {
@@ -165,6 +171,10 @@ pub async fn analyze(mut download_rx: mpsc::Receiver<downloader::Crate>, read_ca
             if let Err(_) = writer.write(&buffer).await {
                 buffer.iter().for_each(|c| handle_error_raw_name(c.crate_name.clone(), "analyze_writer"));
             }
+
+            if let Err(_) = writer.flush().await {
+                buffer.iter().for_each(|c| handle_error_raw_name(c.crate_name.clone(), "analyze_writer_flush"));
+            }
             buffer.clear();
         }
 
@@ -172,8 +182,8 @@ pub async fn analyze(mut download_rx: mpsc::Receiver<downloader::Crate>, read_ca
     });
 
     let download_handle = tokio::spawn(async move {
-        let mut buffer = Vec::with_capacity(5);
-        while download_rx.recv_many(&mut buffer, 5).await > 0 {
+        let mut buffer = Vec::with_capacity(internal_cap);
+        while download_rx.recv_many(&mut buffer, internal_cap).await > 0 {
             let chunk : Vec<downloader::Crate> = buffer.drain(..).collect();
             analyze_stream(chunk, &tx, read_cap).await;
         }
