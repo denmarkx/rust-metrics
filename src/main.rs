@@ -8,8 +8,17 @@ use std::panic;
 use tokio::sync::mpsc;
 use clap::{arg, command, value_parser};
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(64 * 1024 * 1024)
+        .build()
+        .unwrap();
+
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     let matches = command!()
         .arg(
             arg!(-n --numdownloads <NUM> "The number of crates to download.")
@@ -52,12 +61,12 @@ async fn main() {
 
     let read_buffer_cap = matches.get_one::<usize>("readcap").unwrap();
     let write_buffer_cap = matches.get_one::<usize>("writecap").unwrap();
-    let analysis = analyze::analyze(rx, *read_buffer_cap, *write_buffer_cap);
-
-    tokio::join!(download, analysis);
+    let analysis = analyze::analyze(rx, *buffer_size, *read_buffer_cap, *write_buffer_cap);
 
     panic::set_hook(Box::new(|_| {
         error_handling::flush();
     }));
+
+    tokio::join!(download, analysis);
     error_handling::flush();
 }
