@@ -76,11 +76,6 @@ fn find_registry() -> PathBuf {
     return PathBuf::from("registry");
 }
 
-fn want_crate(name: &String) -> bool {
-    let x = vec!["typenum"];
-    x.contains(&name.as_str())
-}
-
 fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
     let registry_path = find_registry();
     println!("Crate Registry Path: {:?}", registry_path);
