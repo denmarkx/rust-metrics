@@ -1,5 +1,6 @@
-use crate::error_handling::{handle_error, handle_error_raw};
+use crate::error_handling::handle_error;
 use async_compression::futures::bufread::GzipDecoder;
+use bitcode::{Decode, Encode};
 use futures_util::stream::TryStreamExt;
 use futures::stream::{self, StreamExt};
 use futures::io::BufReader;
@@ -9,8 +10,8 @@ use anyhow::Result;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{Error, ErrorKind};
-use std::sync::{Arc, Mutex};
-use std::fs::{DirBuilder, read_dir};
+use std::sync::Arc;
+use std::fs::{self, DirBuilder, read_dir};
 use std::path::{Path, PathBuf};
 use std::env;
 
@@ -27,8 +28,9 @@ use serde::{Deserialize, Serialize};
 
 const CRATE_INDEX_URL: &str = "https://github.com/rust-lang/crates.io-index";
 const CRATE_OUTPUT_DIR: &str = "crates";
+const CRATE_INDEX_CACHE: &str = "crates_index.bitcode";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Decode, Encode)]
 pub(crate) struct Crate {
     pub name: String,
     pub version: String
@@ -76,23 +78,12 @@ fn find_registry() -> PathBuf {
     return PathBuf::from("registry");
 }
 
-fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
+fn get_crates_from_git() -> Vec<Crate> {
     let registry_path = find_registry();
     println!("Crate Registry Path: {:?}", registry_path);
 
-    let index = GitIndex::with_path(registry_path, CRATE_INDEX_URL)
+    let index = GitIndex::with_path(&registry_path, CRATE_INDEX_URL)
         .expect("Failed to find or clone Cargo registry.");
-
-    if let Some(n) = num_downloads {
-        let crates : Vec<Crate> = index.crates_parallel()
-            .take_any(*n)
-            .map(|r| {
-                let data = r.unwrap();
-                Crate { name: data.name().to_string(), version: data.highest_version().version().to_string() }
-            })
-            .collect();
-        return crates;
-    }
 
     let crates : Vec<Crate> = index.crates_parallel()
         .filter_map(|r| {
@@ -100,7 +91,42 @@ fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
             Some(Crate { name: data.name().to_string(), version: data.highest_version().version().to_string() })
         })
         .collect();
+
+    cache_crates_from_vec(&crates);
     return crates;
+}
+
+pub fn cache_crates() {
+    get_crates_from_git();
+}
+
+pub fn cache_crates_from_vec(crates: &Vec<Crate>) {
+    let registry_path = find_registry();
+    let index_cache_path = registry_path.join(CRATE_INDEX_CACHE);
+    println!("Caching Crates Index to: {:?}", index_cache_path);
+
+    let index_cache_bytes = bitcode::encode(crates);
+    if let Err(_e) = fs::write(&index_cache_path, &index_cache_bytes) {
+        println!("Failed to write cache of crates.io index to local disk.")
+    }
+}
+
+fn get_crates() -> Vec<Crate> {
+    let registry_path = find_registry();
+    println!("Crate Registry Path: {:?}", registry_path);
+
+    // Check if index cache exists:
+    let index_cache_path = registry_path.join(CRATE_INDEX_CACHE);
+    if index_cache_path.exists() {
+        let index_cache_bytes = fs::read(&index_cache_path);
+        if let Ok(x) = index_cache_bytes {
+            if let Ok(v) = bitcode::decode(&x) {
+                return v;
+            }
+        }
+    }
+
+    return get_crates_from_git();
 }
 
 async fn download_crate(c: &Crate, client: &Client) -> Result<()> {
@@ -136,18 +162,41 @@ async fn download_crate(c: &Crate, client: &Client) -> Result<()> {
     Ok(())
 }
 
-pub async fn download(tx: Arc<mpsc::Sender<Crate>>, num_downloads : Option<&usize>, buffer_cap: &usize) {
+fn create_crates_dir() {
     let crate_dir_path = Path::new(CRATE_OUTPUT_DIR);
     if !crate_dir_path.exists() {
         DirBuilder::new().create(&crate_dir_path)
             .expect("Failed to create crate output directory.");
     }
+}
 
-    let crates : Vec<Crate> = get_crates(num_downloads);
+pub async fn download_by_number(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize, num_downloads : &usize) {
+    let mut crates = get_crates();
+    crates.truncate(*num_downloads);
+    download(crates, tx, buffer_cap).await;
+}
+
+pub async fn download_by_crates(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize, subset : Vec<String>) {
+    let mut crates = get_crates();
+    crates.retain(|x| subset.contains(&x.name));
+    download(crates, tx, buffer_cap).await;
+}
+
+pub async fn download_all(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize) {
+    let crates = get_crates();
+    download(crates, tx, buffer_cap).await;
+}
+
+async fn download(crates: Vec<Crate>, tx: Arc<mpsc::Sender<Crate>>,  buffer_cap: &usize) {
+    create_crates_dir();
+
     let total = crates.len();
     let count = Arc::new(AtomicUsize::new(total));
 
     let client = Client::new();
+
+    // Technically, it would've been better to partition this by knowing the length
+    // of the index in advance so we didn't have to load it all into memory throughout the entire program.
     let _ = stream::iter(crates).map(|c| {
         let client = client.clone();
         let tx_clone = tx.clone();
