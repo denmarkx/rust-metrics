@@ -97,11 +97,7 @@ fn get_crates(num_downloads: Option<&usize>) -> Vec<Crate> {
     let crates : Vec<Crate> = index.crates_parallel()
         .filter_map(|r| {
             let data = r.unwrap();
-            if want_crate(&data.name().to_string()) {
-                Some(Crate { name: data.name().to_string(), version: data.highest_version().version().to_string() })
-            } else {
-                None
-            }
+            Some(Crate { name: data.name().to_string(), version: data.highest_version().version().to_string() })
         })
         .collect();
     return crates;
