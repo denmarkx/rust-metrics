@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use crate::error_handling::handle_error;
 use async_compression::futures::bufread::GzipDecoder;
 use bitcode::{Decode, Encode};
@@ -176,8 +177,9 @@ pub async fn download_by_number(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize
     download(crates, tx, buffer_cap).await;
 }
 
-pub async fn download_by_crates(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize, subset : Vec<String>) {
+pub async fn download_by_crates(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize, names : Vec<String>) {
     let mut crates = get_crates();
+    let subset : HashSet<_> = names.iter().map(|s| s).collect();
     crates.retain(|x| subset.contains(&x.name));
     download(crates, tx, buffer_cap).await;
 }

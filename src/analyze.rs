@@ -116,8 +116,7 @@ async fn process_crate(data: &mut CrateData, c: &downloader::Crate) -> Result<()
 
     for entry in paths {
         let src = fs::read_to_string(&entry?).await?;
-        let syntax = syn::parse_file(&src)?;
-        {
+        if let Ok(syntax) = syn::parse_file(&src) {
             let mut visitor = Visitor { data };
             visitor.visit_file(&syntax);
         }

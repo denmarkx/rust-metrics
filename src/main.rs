@@ -55,7 +55,7 @@ async fn async_main() {
             .value_parser(value_parser!(usize))
             .default_value("1000")
         )
-        .arg( // TODO
+        .arg(
             arg!(-e --errors "Parses all crates from errors.json.")
             .required(false)
         )
@@ -94,7 +94,6 @@ async fn async_main() {
                     downloader::download_all(tx_arc, buffer_cap).await
                 } else if has_errors_flag {
                     let crates = get_crates_from_errors();
-                    dbg!(&crates);
                     downloader::download_by_crates(tx_arc, buffer_cap, crates).await
                 } else {
                     panic!("Either -a, -e, -n, or a list of space-separated crate names must be specified.")
@@ -113,10 +112,6 @@ async fn async_main() {
     let write_buffer_cap = matches.get_one::<usize>("writecap").unwrap();
     let analysis = analyze::analyze(rx, *buffer_size, *read_buffer_cap, *write_buffer_cap);
 
-    panic::set_hook(Box::new(|_| {
-        error_handling::flush();
-    }));
-
     tokio::join!(download, analysis);
     error_handling::flush();
 }
@@ -131,9 +126,10 @@ fn get_crates_from_errors() -> Vec<String> {
 
     // The error data, by mistake, actually concats the crate name and version together.
     let name_only = |name: &mut String| {
-        // a10-0.4.2 len=9, dbv=3
-        let ver_start = rgx.find(name).unwrap().start();
-        name.truncate(ver_start);
+        // Some are actually fine.
+        if let Some(m) = rgx.find(name) {
+            name.truncate(m.start());
+        }
     };
 
     error_data.into_iter()
