@@ -17,7 +17,7 @@ use serde::{Serialize, Deserialize};
 use proc_macro2::TokenTree;
 use tokio::sync::mpsc;
 use crate::downloader;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use tokio::fs;
 use glob::glob;
 
@@ -112,20 +112,16 @@ async fn process_crate(data: &mut CrateData, c: &downloader::Crate) -> Result<()
     let crate_dir_path = format!("crates/{}-{}", c.name, c.version);
     let pattern = format!("{}/**/*.rs", crate_dir_path);
     let paths = glob(&pattern)?;
-    let mut num = 0;
 
     for entry in paths {
-        let src = fs::read_to_string(&entry?).await?;
-        if let Ok(syntax) = syn::parse_file(&src) {
+        let e = &entry?;
+        if !e.is_file() { continue };
+        let src_res = fs::read_to_string(&e).await;
+        if let Err(_) = src_res { continue; }
+        if let Ok(syntax) = syn::parse_file(&src_res.unwrap()) {
             let mut visitor = Visitor { data };
             visitor.visit_file(&syntax);
         }
-        num += 1;
-    }
-
-    // Sort of a downloading or pathing error if we found something with nothing in it..
-    if num == 0 {
-        bail!("No entries found for crate: {}", c.name);
     }
 
     let result = fs::remove_dir_all(&crate_dir_path).await;
