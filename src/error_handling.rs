@@ -5,8 +5,8 @@ use std::sync::{OnceLock, Mutex};
 use std::fs::File;
 
 #[derive(Serialize, Deserialize)]
-struct ErrorData {
-    name: String,
+pub(crate) struct ErrorData {
+    pub(crate) name: String,
     origin: String
 }
 

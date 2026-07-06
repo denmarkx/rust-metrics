@@ -3,8 +3,10 @@ mod writer;
 mod analyze;
 mod downloader;
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::{fs::File, sync::Arc};
 use std::panic;
+use regex::Regex;
 use tokio::sync::mpsc;
 use clap::{Arg, ArgAction, arg, command, value_parser};
 
@@ -20,6 +22,10 @@ fn main() {
 
 async fn async_main() {
     let matches = command!()
+        .arg(
+            arg!(-a --all "Downloads and analyzes all crates.")
+            .required(false)
+        )
         .arg(
             arg!(-n --numdownloads <NUM> "The number of crates to download.")
             .required(false)
@@ -50,7 +56,7 @@ async fn async_main() {
             .default_value("1000")
         )
         .arg( // TODO
-            arg!(-e --reparse_errors "Parses all crates from errors.json.")
+            arg!(-e --errors "Parses all crates from errors.json.")
             .required(false)
         )
         .arg(
@@ -77,9 +83,23 @@ async fn async_main() {
     let download_num_opt = matches.get_one::<usize>("numdownloads");
     let download_crates_opt = matches.get_many::<String>("crates");
 
+    let has_all_flag = matches.get_flag("all");
+    let has_errors_flag = matches.get_flag("errors");
+
     let download = async move {
         match(download_num_opt, download_crates_opt) {
-            (None, None) => downloader::download_all(tx_arc, buffer_cap).await,
+            (None, None) => {
+                // Only two options can be specified if not -n or <crates>: -e or -a
+                if has_all_flag {
+                    downloader::download_all(tx_arc, buffer_cap).await
+                } else if has_errors_flag {
+                    let crates = get_crates_from_errors();
+                    dbg!(&crates);
+                    downloader::download_by_crates(tx_arc, buffer_cap, crates).await
+                } else {
+                    panic!("Either -a, -e, -n, or a list of space-separated crate names must be specified.")
+                }
+            }
             (None, Some(val_ref)) => {
                 let crates = val_ref.into_iter().cloned().collect();
                 downloader::download_by_crates(tx_arc, buffer_cap, crates).await
@@ -99,4 +119,27 @@ async fn async_main() {
 
     tokio::join!(download, analysis);
     error_handling::flush();
+}
+
+fn get_crates_from_errors() -> Vec<String> {
+    let file = File::open("errors.json")
+        .expect("Unable to find or open errors.json.");
+    let mut data : HashMap<String, Vec<error_handling::ErrorData>> = serde_json::from_reader(file)
+        .expect("Unable to parse errors.json.");
+    let error_data = data.remove("crates").unwrap();
+    let rgx = Regex::new(r"-\d+\.").unwrap();
+
+    // The error data, by mistake, actually concats the crate name and version together.
+    let name_only = |name: &mut String| {
+        // a10-0.4.2 len=9, dbv=3
+        let ver_start = rgx.find(name).unwrap().start();
+        name.truncate(ver_start);
+    };
+
+    error_data.into_iter()
+        .map(|mut x| { 
+            name_only(&mut x.name);
+            x.name
+        })
+        .collect::<Vec<String>>()
 }
