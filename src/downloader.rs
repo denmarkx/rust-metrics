@@ -153,7 +153,10 @@ async fn download_crate(c: &Crate, client: &Client) -> Result<()> {
 
     let file = File::open(&output_file_path).await?;
     let mut archive = Archive::new(file);
-    archive.unpack(CRATE_OUTPUT_DIR).await?;
+
+    // Some crates may have invalid paths (depending on OS) due to testing.
+    // fortunately, archive.unpack still unpacks even if it errors.
+    let _ = archive.unpack(CRATE_OUTPUT_DIR).await;
 
     // It's not really a damaging error if this fails..
     if let Err(_) = std::fs::remove_file(&output_file_path) {
