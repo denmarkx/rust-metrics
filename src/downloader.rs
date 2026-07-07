@@ -1,23 +1,23 @@
-use std::collections::HashSet;
 use crate::error_handling::handle_error;
-use async_compression::futures::bufread::GzipDecoder;
-use futures_util::stream::TryStreamExt;
-use futures::stream::{self, StreamExt};
-use futures::io::BufReader;
-use futures::io::copy;
+
 use reqwest::Client;
 use anyhow::Result;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{Error, ErrorKind};
+use std::collections::HashSet;
 use std::fs::DirBuilder;
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio_util::compat::TokioAsyncWriteCompatExt;
-use tokio::sync::mpsc;
+use async_compression::tokio::bufread::GzipDecoder;
+use tokio::fs::{File, remove_file};
+use tokio_util::io::StreamReader;
+use futures_util::stream;
+use futures::StreamExt;
 use tokio_tar::Archive;
-use tokio::fs::File;
+use tokio::sync::mpsc;
+use tokio::io::copy;
 
 use crate::index::{Crate, get_crates};
 
@@ -31,30 +31,17 @@ async fn download_crate(c: &Crate, client: &Client) -> Result<()> {
 
     let output_file_path = Path::new(CRATE_OUTPUT_DIR).join(format!("{}.crate", c.name));
 
-    let stream = resp?
+    let b_stream = resp?
         .bytes_stream()
-        .map_err(|e| Error::new(ErrorKind::Other, e))
-        .into_async_read();
+        .map(|r| { r.map_err(|e| Error::new(ErrorKind::Other, e)) });
 
-    let mut output_file = File::create(&output_file_path)
-        .await?
-        .compat_write();
-
-    let buf_reader = BufReader::new(stream);
-    let gz_decoder = GzipDecoder::new(buf_reader);
-    copy(gz_decoder, &mut output_file).await?;
-
-    let file = File::open(&output_file_path).await?;
-    let mut archive = Archive::new(file);
+    let stream_reader = StreamReader::new(b_stream);
+    let gz_decoder = GzipDecoder::new(stream_reader);
+    let mut archive = Archive::new(gz_decoder);
 
     // Some crates may have invalid paths (depending on OS) due to testing.
     // fortunately, archive.unpack still unpacks even if it errors.
     let _ = archive.unpack(CRATE_OUTPUT_DIR).await;
-
-    // It's not really a damaging error if this fails..
-    if let Err(_) = std::fs::remove_file(&output_file_path) {
-        handle_error(&c, "remove_crate_file");
-    }
 
     Ok(())
 }

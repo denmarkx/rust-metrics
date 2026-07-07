@@ -5,7 +5,7 @@ edition = "2024"
 exclude = ["/crates/", "/index/"]
 
 [dependencies]
-async-compression = { version = "0.4.42", features = ["futures-io", "gzip"] }
+async-compression = { version = "0.4.42", features = ["futures-io", "tokio", "gzip"] }
 flate2 = "1.1.9"
 futures = "0.3.32"
 futures-core = "0.3.32"

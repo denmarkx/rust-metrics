@@ -59,7 +59,6 @@ fn find_registry() -> PathBuf {
     return PathBuf::from("registry");
 }
 
-
 fn get_crates_from_git() -> Vec<Crate> {
     let registry_path = find_registry();
     println!("Crate Registry Path: {:?}", registry_path);
