@@ -2,13 +2,17 @@ mod error_handling;
 mod writer;
 mod analyze;
 mod downloader;
+mod index;
 
+use crate::downloader::{download_all, download_by_crates, download_by_number};
+use crate::index::{cache_crates, Crate};
+
+use clap::{Arg, ArgAction, arg, command, value_parser};
 use std::collections::HashMap;
 use std::{fs::File, sync::Arc};
-use std::panic;
-use regex::Regex;
 use tokio::sync::mpsc;
-use clap::{Arg, ArgAction, arg, command, value_parser};
+use regex::Regex;
+use std::panic;
 
 fn main() {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -72,12 +76,12 @@ async fn async_main() {
         .get_matches();
 
     if matches.get_flag("cache") {
-        downloader::cache_crates();
+        cache_crates();
     }
 
     let buffer_cap = matches.get_one::<usize>("downloadcap").unwrap();
     let buffer_size = matches.get_one::<usize>("internalcap").unwrap();
-    let (tx, rx) = mpsc::channel::<downloader::Crate>(*buffer_size);
+    let (tx, rx) = mpsc::channel::<Crate>(*buffer_size);
     let tx_arc = Arc::new(tx);
 
     let download_num_opt = matches.get_one::<usize>("numdownloads");
@@ -91,19 +95,19 @@ async fn async_main() {
             (None, None) => {
                 // Only two options can be specified if not -n or <crates>: -e or -a
                 if has_all_flag {
-                    downloader::download_all(tx_arc, buffer_cap).await
+                    download_all(tx_arc, buffer_cap).await
                 } else if has_errors_flag {
                     let crates = get_crates_from_errors();
-                    downloader::download_by_crates(tx_arc, buffer_cap, crates).await
+                    download_by_crates(tx_arc, buffer_cap, crates).await
                 } else {
                     panic!("Either -a, -e, -n, or a list of space-separated crate names must be specified.")
                 }
             }
             (None, Some(val_ref)) => {
                 let crates = val_ref.into_iter().cloned().collect();
-                downloader::download_by_crates(tx_arc, buffer_cap, crates).await
+                download_by_crates(tx_arc, buffer_cap, crates).await
             },
-            (Some(n), None) => downloader::download_by_number(tx_arc, buffer_cap, n).await,
+            (Some(n), None) => download_by_number(tx_arc, buffer_cap, n).await,
             (Some(_), Some(_)) => panic!("--numdownloads and --crates cannot be specified together."),
         }
     };

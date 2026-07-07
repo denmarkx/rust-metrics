@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-
-use crate::downloader::Crate;
 use std::sync::{OnceLock, Mutex};
+use crate::index::Crate;
 use std::fs::File;
 
 #[derive(Serialize, Deserialize)]

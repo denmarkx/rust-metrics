@@ -1,5 +1,6 @@
 use crate::error_handling::{handle_error_raw, handle_error_raw_name};
 use crate::writer::Writer;
+use crate::index::Crate;
 use syn::visit::Visit;
 use syn::{
     ExprUnsafe,
@@ -16,7 +17,6 @@ use futures::stream::{self, StreamExt};
 use serde::{Serialize, Deserialize};
 use proc_macro2::TokenTree;
 use tokio::sync::mpsc;
-use crate::downloader;
 use anyhow::Result;
 use tokio::fs;
 use glob::glob;
@@ -108,7 +108,7 @@ impl<'a> Visit<'a> for Visitor<'_> {
     }
 }
 
-async fn process_crate(data: &mut CrateData, c: &downloader::Crate) -> Result<()> {
+async fn process_crate(data: &mut CrateData, c: &Crate) -> Result<()> {
     let crate_dir_path = format!("crates/{}-{}", c.name, c.version);
     let pattern = format!("{}/**/*.rs", crate_dir_path);
     let paths = glob(&pattern)?;
@@ -132,7 +132,7 @@ async fn process_crate(data: &mut CrateData, c: &downloader::Crate) -> Result<()
     Ok(())
 }
 
-async fn analyze_stream(chunk: Vec<downloader::Crate>, tx: &mpsc::Sender<CrateData>, read_cap: usize) {
+async fn analyze_stream(chunk: Vec<Crate>, tx: &mpsc::Sender<CrateData>, read_cap: usize) {
     let targets = stream::iter(chunk);
     let _ = targets.map(|c| {
         let tx_clone = tx.clone();
@@ -155,7 +155,7 @@ async fn analyze_stream(chunk: Vec<downloader::Crate>, tx: &mpsc::Sender<CrateDa
     .await;
 }
 
-pub async fn analyze(mut download_rx: mpsc::Receiver<downloader::Crate>, internal_cap: usize, read_cap: usize, write_cap: usize) {
+pub async fn analyze(mut download_rx: mpsc::Receiver<Crate>, internal_cap: usize, read_cap: usize, write_cap: usize) {
     let (tx, mut rx) = mpsc::channel::<CrateData>(write_cap);
 
     let write_handle = tokio::spawn(async move {
@@ -179,7 +179,7 @@ pub async fn analyze(mut download_rx: mpsc::Receiver<downloader::Crate>, interna
     let download_handle = tokio::spawn(async move {
         let mut buffer = Vec::with_capacity(internal_cap);
         while download_rx.recv_many(&mut buffer, internal_cap).await > 0 {
-            let chunk : Vec<downloader::Crate> = buffer.drain(..).collect();
+            let chunk : Vec<Crate> = buffer.drain(..).collect();
             analyze_stream(chunk, &tx, read_cap).await;
         }
     });
