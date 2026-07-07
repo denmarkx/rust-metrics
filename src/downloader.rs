@@ -85,11 +85,16 @@ pub async fn download_all(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize) {
     download(crates, tx, buffer_cap).await;
 }
 
-async fn download(crates: Vec<Crate>, tx: Arc<mpsc::Sender<Crate>>,  buffer_cap: &usize) {
+async fn download(mut crates: Vec<Crate>, tx: Arc<mpsc::Sender<Crate>>,  buffer_cap: &usize) {
     create_crates_dir();
 
     let total = crates.len();
     let count = Arc::new(AtomicUsize::new(total));
+
+    // crates.dep is no longer needed at this point and it doesnt need to be on the heap longer than it has to.
+    for krate in &mut crates {
+        drop(std::mem::take(&mut krate.deps));
+    }
 
     let client = Client::new();
 
