@@ -126,7 +126,7 @@ async fn process_crate(data: &mut CrateData, c: &Crate) -> Result<()> {
 
     let result = remove_dir_all(&crate_dir_path).await;
     if let Err(_) = result {
-        println!("Failed to remove crate directory: {}.", crate_dir_path)
+        tracing::warn!("Failed to remove crate directory: {}.", crate_dir_path)
     }
 
     Ok(())
@@ -139,7 +139,7 @@ async fn analyze_stream(chunk: Vec<Crate>, tx: &mpsc::Sender<CrateData>, read_ca
         async move {
             let mut crate_data = CrateData::default();
             crate_data.set_crate_name(&c.name);
-            println!("Analyzing crate: {}", crate_data.crate_name);
+            tracing::info!("Analyzing crate: {}", crate_data.crate_name);
 
             if let Ok(_) = process_crate(&mut crate_data, &c).await {
                 if let Ok(_) = tx_clone.send(crate_data).await {

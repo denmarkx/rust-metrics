@@ -7,6 +7,8 @@ mod index;
 use crate::downloader::{download_all, download_by_crates, download_by_number};
 use crate::index::{cache_crates, Crate};
 
+use tracing_subscriber;
+
 use clap::{Arg, ArgAction, arg, command, value_parser};
 use std::collections::HashMap;
 use std::{fs::File, sync::Arc};
@@ -24,6 +26,8 @@ fn main() {
 }
 
 async fn async_main() {
+    let _ = tracing_subscriber::fmt::init();
+
     let matches = command!()
         .arg(
             arg!(-a --all "Downloads and analyzes all crates.")

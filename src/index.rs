@@ -61,7 +61,7 @@ fn find_registry() -> PathBuf {
 
 fn get_crates_from_git() -> Vec<Crate> {
     let registry_path = find_registry();
-    println!("Crate Registry Path: {:?}", registry_path);
+    tracing::info!("Crate Registry Path: {:?}", registry_path);
 
     let index = GitIndex::with_path(&registry_path, CRATE_INDEX_URL)
         .expect("Failed to find or clone Cargo registry.");
@@ -87,17 +87,17 @@ fn get_crates_from_git() -> Vec<Crate> {
 fn cache_crates_from_vec(crates: &Vec<Crate>) {
     let registry_path = find_registry();
     let index_cache_path = registry_path.join(CRATE_INDEX_CACHE);
-    println!("Caching Crates Index to: {:?}", index_cache_path);
+    tracing::info!("Caching Crates Index to: {:?}", index_cache_path);
 
     let index_cache_bytes = bitcode::encode(crates);
     if let Err(_e) = fs::write(&index_cache_path, &index_cache_bytes) {
-        println!("Failed to write cache of crates.io index to local disk.")
+        tracing::error!("Failed to write cache of crates.io index to local disk.")
     }
 }
 
 pub fn get_crates() -> Vec<Crate> {
     let registry_path = find_registry();
-    println!("Crate Registry Path: {:?}", registry_path);
+    tracing::info!("Crate Registry Path: {:?}", registry_path);
 
     // Check if index cache exists:
     let index_cache_path = registry_path.join(CRATE_INDEX_CACHE);
@@ -110,7 +110,7 @@ pub fn get_crates() -> Vec<Crate> {
         }
     }
 
-    println!("Failed to decode Crate Registry. Recloning...");
+    tracing::error!("Failed to decode Crate Registry. Recloning...");
     return get_crates_from_git();
 }
 

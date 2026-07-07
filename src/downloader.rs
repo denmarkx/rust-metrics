@@ -22,7 +22,7 @@ use crate::index::{Crate, get_crates};
 const CRATE_OUTPUT_DIR: &str = "crates";
 
 async fn download_crate(c: &Crate, client: &Client) -> Result<()> {
-    println!("Downloading Crate: {}", c.name);
+    tracing::info!("Downloading Crate: {}", c.name);
 
     let crate_url = format!("https://static.crates.io/crates/{}/{}-{}.crate", c.name, c.name, c.version);
     let resp = client.get(crate_url).send().await;
@@ -99,7 +99,7 @@ async fn download(mut crates: Vec<Crate>, tx: Arc<mpsc::Sender<Crate>>,  buffer_
             }
 
             let remainder = count.fetch_sub(1, Ordering::Relaxed);
-            println!("{remainder} crates left remaining.");
+            tracing::info!("{remainder} crates left remaining.");
         }
     })
     .buffer_unordered(*buffer_cap)

@@ -23,7 +23,7 @@ fn get_handle() -> &'static ErrorHandling {
 }
 
 pub fn handle_error(c : &Crate, origin: &str) {
-    println!("Failed: [{}], Origin: {}", &c.name, origin);
+    tracing::error!("Failed: [{}], Origin: {}", &c.name, origin);
 
     let handle = get_handle();
     let guard = handle.crates.lock();
@@ -34,7 +34,7 @@ pub fn handle_error(c : &Crate, origin: &str) {
 }
 
 pub fn handle_error_raw(name: String, origin: &str) {
-    println!("Failed: [{}], Origin: {}", &name, origin);
+    tracing::error!("Failed: [{}], Origin: {}", &name, origin);
 
     let handle = get_handle();
     let guard = handle.crates.lock();
@@ -45,7 +45,7 @@ pub fn handle_error_raw(name: String, origin: &str) {
 }
 
 pub fn handle_error_raw_name(name: String, origin: &str) {
-    println!("Failed: [{}], Origin: {}", &name, origin);
+    tracing::error!("Failed: [{}], Origin: {}", &name, origin);
 
     let handle = get_handle();
     let guard = handle.crates.lock();
@@ -58,9 +58,9 @@ pub fn handle_error_raw_name(name: String, origin: &str) {
 fn print_all() {
     let handle = get_handle();
     let guard = handle.crates.lock().unwrap();
-    println!("Errored Crates:");
+    tracing::info!("Errored Crates:");
     guard.iter().for_each(|x| {
-        println!("{}-{}", x.name, x.origin);
+        tracing::info!("{}-{}", x.name, x.origin);
     });
 }
 
@@ -69,7 +69,7 @@ pub fn flush() {
     if let Ok(f) = file {
         let handle = get_handle();
         if let Ok(_) = serde_json::to_writer(f, handle) {
-            println!("Finished with {} crates that went unanalyzed.", handle.crates.lock().unwrap().len());
+            tracing::info!("Finished with {} crates that went unanalyzed.", handle.crates.lock().unwrap().len());
             return;
         }
     }
