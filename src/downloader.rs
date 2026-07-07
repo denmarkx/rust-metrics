@@ -11,13 +11,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_compression::tokio::bufread::GzipDecoder;
-use tokio::fs::{File, remove_file};
 use tokio_util::io::StreamReader;
 use futures_util::stream;
 use futures::StreamExt;
 use tokio_tar::Archive;
 use tokio::sync::mpsc;
-use tokio::io::copy;
 
 use crate::index::{Crate, get_crates};
 
@@ -28,8 +26,6 @@ async fn download_crate(c: &Crate, client: &Client) -> Result<()> {
 
     let crate_url = format!("https://static.crates.io/crates/{}/{}-{}.crate", c.name, c.name, c.version);
     let resp = client.get(crate_url).send().await;
-
-    let output_file_path = Path::new(CRATE_OUTPUT_DIR).join(format!("{}.crate", c.name));
 
     let b_stream = resp?
         .bytes_stream()

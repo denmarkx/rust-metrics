@@ -13,12 +13,12 @@ use syn::{
     ForeignItem,
 };
 
+use tokio::fs::{read_to_string, remove_dir_all};
 use futures::stream::{self, StreamExt};
 use serde::{Serialize, Deserialize};
 use proc_macro2::TokenTree;
 use tokio::sync::mpsc;
 use anyhow::Result;
-use tokio::fs;
 use glob::glob;
 
 const WRITE_FILE_NAME: &str = "crate_data.parquet";
@@ -116,7 +116,7 @@ async fn process_crate(data: &mut CrateData, c: &Crate) -> Result<()> {
     for entry in paths {
         let e = &entry?;
         if !e.is_file() { continue };
-        let src_res = fs::read_to_string(&e).await;
+        let src_res = read_to_string(&e).await;
         if let Err(_) = src_res { continue; }
         if let Ok(syntax) = syn::parse_file(&src_res.unwrap()) {
             let mut visitor = Visitor { data };
@@ -124,7 +124,7 @@ async fn process_crate(data: &mut CrateData, c: &Crate) -> Result<()> {
         }
     }
 
-    let result = fs::remove_dir_all(&crate_dir_path).await;
+    let result = remove_dir_all(&crate_dir_path).await;
     if let Err(_) = result {
         println!("Failed to remove crate directory: {}.", crate_dir_path)
     }
@@ -147,7 +147,7 @@ async fn analyze_stream(chunk: Vec<Crate>, tx: &mpsc::Sender<CrateData>, read_ca
                 }
             }
 
-            handle_error_raw(c.name, c.version, "analyze_stream");
+            handle_error_raw(c.name, "analyze_stream");
         }
     })
     .buffer_unordered(read_cap)

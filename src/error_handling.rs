@@ -23,23 +23,23 @@ fn get_handle() -> &'static ErrorHandling {
 }
 
 pub fn handle_error(c : &Crate, origin: &str) {
-    println!("Failed: [{}-{}], Origin: {}", &c.name, &c.version, origin);
+    println!("Failed: [{}], Origin: {}", &c.name, origin);
 
     let handle = get_handle();
     let guard = handle.crates.lock();
     guard.unwrap().push(ErrorData {
-        name: format!("{}-{}", c.name, c.version),
+        name: c.name.clone(),
         origin: origin.to_string()
     });
 }
 
-pub fn handle_error_raw(name: String, version: String, origin: &str) {
-    println!("Failed: [{}-{}], Origin: {}", &name, &version, origin);
+pub fn handle_error_raw(name: String, origin: &str) {
+    println!("Failed: [{}], Origin: {}", &name, origin);
 
     let handle = get_handle();
     let guard = handle.crates.lock();
     guard.unwrap().push(ErrorData {
-        name: format!("{}-{}", name, version),
+        name: name,
         origin: origin.to_string()
     });
 }

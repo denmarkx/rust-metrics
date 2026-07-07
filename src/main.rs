@@ -11,7 +11,6 @@ use clap::{Arg, ArgAction, arg, command, value_parser};
 use std::collections::HashMap;
 use std::{fs::File, sync::Arc};
 use tokio::sync::mpsc;
-use regex::Regex;
 use std::panic;
 
 fn main() {
@@ -126,20 +125,8 @@ fn get_crates_from_errors() -> Vec<String> {
     let mut data : HashMap<String, Vec<error_handling::ErrorData>> = serde_json::from_reader(file)
         .expect("Unable to parse errors.json.");
     let error_data = data.remove("crates").unwrap();
-    let rgx = Regex::new(r"-\d+\.").unwrap();
-
-    // The error data, by mistake, actually concats the crate name and version together.
-    let name_only = |name: &mut String| {
-        // Some are actually fine.
-        if let Some(m) = rgx.find(name) {
-            name.truncate(m.start());
-        }
-    };
 
     error_data.into_iter()
-        .map(|mut x| { 
-            name_only(&mut x.name);
-            x.name
-        })
+        .map(|x| { x.name })
         .collect::<Vec<String>>()
 }

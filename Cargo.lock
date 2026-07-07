@@ -2734,7 +2734,6 @@ dependencies = [
  "parquet",
  "proc-macro2",
  "rayon",
- "regex",
  "reqwest",
  "serde",
  "serde_arrow",
