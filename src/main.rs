@@ -15,6 +15,8 @@ use std::{fs::File, sync::Arc};
 use tokio::sync::mpsc;
 use std::panic;
 
+const TOP_N_MATCHES: [&str; 2] = ["downloads", "sizes"];
+
 fn main() {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -67,13 +69,23 @@ async fn async_main() {
             .required(false)
         )
         .arg(
-            Arg::new("crates")
-            .action(ArgAction::Append)
-            .help("Reparses only the crates specified. Separate by space for multiple.")
+            arg!(-c --cache "Caches the relevant parts of the Crates.io index to local disk.")
             .required(false)
         )
         .arg(
-            arg!(-c --cache "Caches the relevant parts of the Crates.io index to local disk.")
+            arg!(-t --top <CATEGORY>)
+            .required(false)
+            .value_parser(value_parser!(String))
+            .help(
+                format!("Species only the top-n crates.\
+                    Categorized by setting one of: <{}>.\
+                    Must be used in concert with -n <NUM>.", TOP_N_MATCHES.join(", "))
+            )
+        )
+        .arg(
+            Arg::new("crates")
+            .action(ArgAction::Append)
+            .help("Reparses only the crates specified. Separate by space for multiple.")
             .required(false)
         )
         .get_matches();
@@ -90,6 +102,8 @@ async fn async_main() {
     let download_num_opt = matches.get_one::<usize>("numdownloads");
     let download_crates_opt = matches.get_many::<String>("crates");
 
+    let top_match = matches.get_one::<String>("top");
+
     let has_all_flag = matches.get_flag("all");
     let has_errors_flag = matches.get_flag("errors");
 
@@ -102,6 +116,8 @@ async fn async_main() {
                 } else if has_errors_flag {
                     let crates = get_crates_from_errors();
                     download_by_crates(tx_arc, buffer_cap, crates).await
+                } else if top_match.is_some() {
+                    panic!("--top must be used with -n.")
                 } else {
                     panic!("Either -a, -e, -n, or a list of space-separated crate names must be specified.")
                 }
@@ -110,7 +126,18 @@ async fn async_main() {
                 let crates = val_ref.into_iter().cloned().collect();
                 download_by_crates(tx_arc, buffer_cap, crates).await
             },
-            (Some(n), None) => download_by_number(tx_arc, buffer_cap, n).await,
+            (Some(n), None) => {
+                // An additional option here is --top <category>.
+                if let None = top_match {
+                    return download_by_number(tx_arc, buffer_cap, n).await;
+                }
+
+                match &top_match.unwrap().to_lowercase()[..] {
+                    "downloads" => panic!("download"),
+                    "size" => panic!("size"),
+                    _ => panic!("Invalid category for --top. See: <{}>", TOP_N_MATCHES.join(", ")),
+                }
+            },
             (Some(_), Some(_)) => panic!("--numdownloads and --crates cannot be specified together."),
         }
     };
