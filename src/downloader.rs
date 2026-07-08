@@ -1,11 +1,13 @@
 use crate::error_handling::handle_error;
 
+use reqwest::header::{ACCEPT, HeaderValue};
 use reqwest::Client;
 use anyhow::Result;
+use serde_json::Value;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{Error, ErrorKind};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::DirBuilder;
 use std::path::Path;
 use std::sync::Arc;
@@ -20,6 +22,11 @@ use tokio::sync::mpsc;
 use crate::index::{Crate, get_crates};
 
 const CRATE_OUTPUT_DIR: &str = "crates";
+
+#[derive(Debug)]
+pub enum TopCategory {
+    Downloads,
+}
 
 async fn download_crate(c: &Crate, client: &Client) -> Result<()> {
     tracing::info!("Downloading Crate: {}", c.name);
@@ -50,9 +57,75 @@ fn create_crates_dir() {
     }
 }
 
+async fn get_top_crates(category: TopCategory, num: usize) -> Result<Vec<Crate>> {
+    let mut query : HashMap<&str, &str> = HashMap::new();
+    let num_str = num.to_string();
+
+    match category {
+        TopCategory::Downloads => {
+            query.insert("sort", "downloads");
+            query.insert("per_page", &num_str);
+        }
+    }
+
+    let client = Client::builder()
+        .user_agent("github.com/denmarkx/rust-metrics")
+        .build()?;
+
+    let resp = client.get("https://crates.io/api/v1/crates")
+        .header(ACCEPT, HeaderValue::from_static("application/json"))
+        .query(&query)
+        .send()
+        .await?;
+
+    let text = resp.text().await?;
+    let parsed: Value = serde_json::from_str(&text)?;
+    let crate_objects = &parsed["crates"].as_array();
+
+    if let Some(x) = crate_objects {
+        let names : Vec<&str> = x.iter()
+            .map(|x| x["name"].as_str().unwrap())
+            .collect();
+
+        let mut crates = get_crates();
+        crates.retain(|c| names.contains(&c.name.as_str()));
+        return Ok(crates);
+    }
+
+    Err(Error::new(ErrorKind::Other, "Failed to get top crates by category.").into())
+}
+
+pub async fn download_by_top_size(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize, num_downloads : &usize) {
+    // I thought this was a category within the crates.io API..
+    // ..and its also not available in crates_index either.
+    // next option is to probably download the daily db dump and query from there..
+    todo!("...");
+}
+
+pub async fn download_by_top_n(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize, category: TopCategory, num_downloads : &usize) {
+    if let Ok(crates) = get_top_crates(category, *num_downloads).await {
+        download(crates, tx, buffer_cap).await;
+        return;
+    }
+    tracing::error!("Failed to query top-n crates by category.");
+}
+
 pub async fn download_by_number(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize, num_downloads : &usize) {
     let mut crates = get_crates();
     crates.truncate(*num_downloads);
+    download(crates, tx, buffer_cap).await;
+}
+
+pub async fn download_by_dependencies(tx: Arc<mpsc::Sender<Crate>>, buffer_cap: &usize, names : Vec<String>) {
+    let mut crates = get_crates();
+    crates.retain(|x| {
+        for dep in &x.deps {
+            if names.contains(dep) {
+                return true;
+            }
+        }
+        return false;
+    });
     download(crates, tx, buffer_cap).await;
 }
 

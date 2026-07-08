@@ -4,7 +4,14 @@ mod analyze;
 mod downloader;
 mod index;
 
-use crate::downloader::{download_all, download_by_crates, download_by_number};
+use crate::downloader::{
+    TopCategory,
+    download_all,
+    download_by_crates,
+    download_by_dependencies,
+    download_by_number,
+    download_by_top_n,
+};
 use crate::index::{cache_crates, Crate};
 
 use tracing_subscriber;
@@ -73,6 +80,10 @@ async fn async_main() {
             .required(false)
         )
         .arg(
+            arg!(-d --deps "Instead of analyzing the specified crates, analyze crates with the given dependencies.")
+            .required(false)
+        )
+        .arg(
             arg!(-t --top <CATEGORY>)
             .required(false)
             .value_parser(value_parser!(String))
@@ -106,6 +117,7 @@ async fn async_main() {
 
     let has_all_flag = matches.get_flag("all");
     let has_errors_flag = matches.get_flag("errors");
+    let has_deps_flag = matches.get_flag("deps");
 
     let download = async move {
         match(download_num_opt, download_crates_opt) {
@@ -124,7 +136,11 @@ async fn async_main() {
             }
             (None, Some(val_ref)) => {
                 let crates = val_ref.into_iter().cloned().collect();
-                download_by_crates(tx_arc, buffer_cap, crates).await
+                if has_deps_flag {
+                    download_by_dependencies(tx_arc, buffer_cap, crates).await
+                } else {
+                    download_by_crates(tx_arc, buffer_cap, crates).await
+                }
             },
             (Some(n), None) => {
                 // An additional option here is --top <category>.
@@ -132,11 +148,13 @@ async fn async_main() {
                     return download_by_number(tx_arc, buffer_cap, n).await;
                 }
 
-                match &top_match.unwrap().to_lowercase()[..] {
-                    "downloads" => panic!("download"),
-                    "size" => panic!("size"),
+                let category = match &top_match.unwrap().to_lowercase()[..] {
+                    "downloads" => TopCategory::Downloads,
+                    // "size" => TopCategory::Size,
                     _ => panic!("Invalid category for --top. See: <{}>", TOP_N_MATCHES.join(", ")),
-                }
+                };
+
+                download_by_top_n(tx_arc, buffer_cap, category, n).await
             },
             (Some(_), Some(_)) => panic!("--numdownloads and --crates cannot be specified together."),
         }
